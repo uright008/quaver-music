@@ -1,7 +1,11 @@
 // Quaver — 浏览器侧 API 封装（全部走同源 /api 中继 → Python sidecar :3200）
-// 响应信封：{code:0,msg:"ok",data:...}；错误 {code:-1,msg:...} + HTTP 状态。
+// 响应信封：{code:0,msg:"ok",data:...}；错误 {code:<code>,msg:...} + HTTP 状态。
+// 信封 code：0=成功；-1=未分类（本地守卫/网络/中继不可达）；正数=上游 QQ 音乐 CGI
+// 原始码（如 2001 限流、1000/104401/104400 凭证过期；码表见
+// vendor/QQMusicApi/qqmusic_api/core/exceptions.py）。
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** code 为信封里的业务码；缺失（非信封响应）时为 -1。*/
+  constructor(public status: number, message: string, public code = -1) {
     super(message);
   }
 }
@@ -14,8 +18,9 @@ export const api = async <T = any>(path: string, init?: RequestInit): Promise<T>
   } catch {
     throw new ApiError(r.status, `HTTP ${r.status} ${path}`);
   }
-  if (!r.ok || (typeof j?.code === "number" && j.code !== 0)) {
-    throw new ApiError(r.status, j?.msg ?? `HTTP ${r.status} ${path}`);
+  const code = typeof j?.code === "number" ? j.code : null;
+  if (!r.ok || (code !== null && code !== 0)) {
+    throw new ApiError(r.status, j?.msg ?? `HTTP ${r.status} ${path}`, code ?? -1);
   }
   return j.data as T;
 };

@@ -1,7 +1,14 @@
 """Quaver sidecar 主应用：FastAPI + 路由契约.
 
 响应统一 {code:0,msg:"ok",data:<pydantic 序列化>}（对齐上游 QQMusicApi web 约定）。
-错误经 exception handler 归一为 {code:-1,msg:...} + 对应 HTTP 状态码。
+错误经 exception handler 归一为 {code:<code>,msg:...} + 对应 HTTP 状态码。
+
+信封 code 语义（前端 ApiError.code 同源）：
+- 0：成功。
+- -1：未分类错误——本地守卫失败、网络/解析失败、中继不可达等，无上游码可透传。
+- 正数：上游（QQ 音乐 CGI）原始错误码，取自 qqmusic_api.ApiException.code，
+  如 2001 风控限流、1000/104401/104400 凭证过期、20450 封号；完整码表见
+  vendor/QQMusicApi/qqmusic_api/core/exceptions.py。
 """
 
 from __future__ import annotations
@@ -23,9 +30,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import quaver_server  # noqa: F401  (触发 vendor path 注入)
 from qqmusic_api import Credential
 from qqmusic_api.core.exceptions import (
+    ApiDataError,
+    ApiException,
     BaseApiException,
+    CredentialExpiredError,
     CredentialInvalidError,
+    GlobalApiError,
+    HTTPError,
     LoginError,
+    NetworkError,
     RatelimitedError,
 )
 from qqmusic_api.models.login import QR
@@ -112,12 +125,17 @@ async def cdn_domain() -> str:
 
 
 async def call(fn: Callable[[], Any], *, need_login: bool = False) -> Any:
-    """统一执行 SDK 调用：登录守卫 + 凭证过期自动刷新重试一次."""
+    """统一执行 SDK 调用：登录守卫 + 凭证过期自动刷新重试一次.
+
+    要同时抓两个异常：CredentialInvalidError 是本地缺凭证（SDK 在请求前抛），
+    CredentialExpiredError 是服务端判过期（CGI code 1000/104401/104400 抛）。
+    二者无继承关系——只抓前者会让刷新重试永远不触发。
+    """
     if need_login:
         session.require()
     try:
         return await fn()
-    except CredentialInvalidError:
+    except (CredentialInvalidError, CredentialExpiredError):
         if not session.logged_in:
             raise
         refreshed = await _try_refresh()
@@ -156,15 +174,22 @@ app = FastAPI(title="Quaver API sidecar", version="0.1.0", docs_url="/swagger", 
 
 @app.exception_handler(BaseApiException)
 async def _api_exc(_r: Request, exc: BaseApiException) -> JSONResponse:
+    # 状态码只回答"谁该负责"：401 需重新登录，429 需退避，502 是上游/传输故障，
+    # 400 是请求本身或上游业务拒绝。分组依据见 vendor .../core/exceptions.py。
     if isinstance(exc, RatelimitedError):
         status = 429
-    elif isinstance(exc, (CredentialInvalidError,)):
-        status = 401
+    elif isinstance(exc, (CredentialInvalidError, CredentialExpiredError)):
+        status = 401  # 本地缺凭证 / 服务端判过期——UI 都应引导登录
+    elif isinstance(exc, (NetworkError, HTTPError, ApiDataError, GlobalApiError)):
+        status = 502  # 上游不可达 / HTTP 异常 / 响应解析失败 / 网关拦截
     elif isinstance(exc, LoginError):
         status = 400
     else:
         status = 400
-    return JSONResponse(status_code=status, content={"code": -1, "msg": str(exc)})
+    # 透传上游原始码（本地异常如 NetworkError/CredentialInvalidError 无 code，保持 -1）；
+    # code=0 不能出现在错误响应里，否则前端会当成成功
+    code = exc.code if isinstance(exc, ApiException) and exc.code != 0 else -1
+    return JSONResponse(status_code=status, content={"code": code, "msg": str(exc)})
 
 
 @app.exception_handler(StarletteHTTPException)
