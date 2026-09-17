@@ -433,3 +433,31 @@ body.ssd .winbtns, body.ssd .win-dragtop { display: none; }
 
 /* 歌词字体族（仅作用于正在播放页歌词，独立于界面字体） */
 .np-lyrics { font-family: var(--font-lyric, var(--font-default)); }
+
+/* ===================== 异步提示（toast） ===================== */
+/* 顶部居中 + z-index 80：高于 .np(50)/.player(60)/浮窗(70)，低于窗口按钮(90)。
+   容器 pointer-events:none，否则会吞掉 .player 整条拖拽 seek。
+   top:56px 是刻意避开顶部那条 8px 高的隐形拖拽区(.win-dragtop)。 */
+.notice-layer {
+  position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 80;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none; -webkit-app-region: no-drag;
+}
+.notice {
+  pointer-events: auto; cursor: pointer;
+  max-width: min(560px, 78vw); padding: 9px 16px; border-radius: 10px;
+  background: var(--volpop); border: 1px solid var(--glass-line);
+  box-shadow: 0 10px 32px rgba(15,20,30,.18);
+  backdrop-filter: blur(24px) saturate(1.5); -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  color: var(--ink); font-size: 13px; line-height: 1.45; word-break: break-word;
+  animation: notice-in .18s ease-out;
+}
+.notice.out { opacity: 0; transform: translateY(-6px); transition: opacity .18s ease, transform .18s ease; }
+.notice.info { border-color: #19c2d866; }
+.notice.warn { border-color: #e0a83c88; color: #8a6100; }
+.notice.error { border-color: #c6282855; color: #c62828; }
+html[data-theme="dark"] .notice.warn { color: #e8c07a; }
+html[data-theme="dark"] .notice.error { color: #e66; }
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(-8px); }
+}

@@ -5,6 +5,7 @@
 // 旧的多页入口（daily.html 等）保留为薄跳转层。
 import "./style.css";
 import { api, coverUrl, upPic, identityBadges } from "./lib/api";
+import { notice, mountNotices, errText } from "./lib/notice";
 import { player } from "./player";
 import { PlayerBar } from "./components/PlayerBar";
 import { NowPlaying } from "./components/NowPlaying";
@@ -60,12 +61,15 @@ export async function renderRoute() {
     if (typeof cleanup === "function") mountedCleanup = cleanup;
   } catch (e) {
     console.error(e);
-    state.content.innerHTML = `<div class="muted">页面加载失败：${String((e as Error).message ?? e)}</div>`;
+    const msg = errText(e);
+    state.content.innerHTML = `<div class="muted">页面加载失败：${msg}</div>`;
+    notice(`页面加载失败：${msg}`, "error");
   }
   player.markActive();
 }
 
 export function bootShell() {
+  mountNotices(); // 全局兜底：此后任何未捕获错误都会变成一条提示
   // 环境色层：当前封面高斯模糊铺满窗口，供侧栏/播放条等玻璃面板透出色彩
   const ambient = document.createElement("div");
   ambient.className = "ambient";
@@ -145,8 +149,8 @@ async function bootSidebar() {
     const st: any = await api("/login/status");
     if (!st?.logged_in) return; // 未登录：保持占位样式
     const [me, vip] = await Promise.all([
-      api<any>("/user/me").catch(() => null),
-      api<any>("/user/vip").catch(() => null),
+      api<any>("/user/me").catch((e) => { notice(`用户信息加载失败：${errText(e)}`, "warn"); return null; }),
+      api<any>("/user/vip").catch((e) => { notice(`会员信息加载失败：${errText(e)}`, "warn"); return null; }),
     ]);
     const base = me?.base_info;
     if (!base?.name) return;
@@ -159,7 +163,8 @@ async function bootSidebar() {
     document.getElementById("badges")!.innerHTML = identityBadges(me, vip);
 
     // 我喜欢（dirid=201 固定）不进歌单列表——导航栏已有入口
-    const pl: any = await api("/user/created-songlists").catch(() => null);
+    const pl: any = await api("/user/created-songlists")
+      .catch((e) => { notice(`歌单加载失败：${errText(e)}`, "warn"); return null; });
     const box = document.getElementById("playlists")!;
     box.innerHTML = "";
     for (const x of (pl?.playlists ?? []).filter((p: any) => p.dirid !== 201)) {
@@ -173,5 +178,6 @@ async function bootSidebar() {
     if (!box.children.length) box.innerHTML = `<div class="pl-empty">暂无歌单</div>`;
   } catch (e) {
     console.warn("sidebar boot failed", e);
+    notice(`侧栏加载失败：${errText(e)}`, "warn");
   }
 }

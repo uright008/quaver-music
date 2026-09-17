@@ -1,6 +1,7 @@
 // Quaver — 全局播放器状态机（常驻于 SPA 壳层，跨视图不销毁，音频不中断）
 // 订阅式：任何状态变化 notify 所有 UI（播放条 / 正在播放页 / 队列面板）。
 import { api, postJson, getPlayUrl, coverUrl } from "./lib/api";
+import { notice } from "./lib/notice";
 import { parseLrc, type LyricLine } from "./lyric";
 
 export type Song = {
@@ -126,7 +127,10 @@ class Player {
       this.audio.src = url;
       await this.audio.play();
     } catch (e: any) {
-      if (this.current === s) this.error = String(e?.message ?? e);
+      if (this.current === s) {
+        this.error = String(e?.message ?? e);
+        notice(`播放失败：${this.error}`, "error");
+      }
     }
     this.fetchLyric(s);
     this.notify();
@@ -202,6 +206,7 @@ class Player {
         if (on) this.loved.delete(mid); else this.loved.add(mid);
         localStorage.setItem(LS_KEY, JSON.stringify([...this.loved]));
         this.error = "收藏失败：" + (e?.message ?? e);
+        notice(this.error, "warn");
         this.notify();
       });
   }
